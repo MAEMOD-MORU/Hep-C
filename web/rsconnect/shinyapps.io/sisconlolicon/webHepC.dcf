@@ -1,0 +1,14 @@
+name: webHepC
+title: webHepC
+username:
+account: sisconlolicon
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 481159
+bundleId: 5382659
+url: https://sisconlolicon.shinyapps.io/webHepC/
+when: 1639710508.49945
+lastSyncTime: 1639710508.49945
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|_DS_Store

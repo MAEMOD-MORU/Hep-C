@@ -1,1 +1,1 @@
-# Hep-C
+# HepC
