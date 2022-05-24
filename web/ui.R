@@ -1145,11 +1145,12 @@ shinyUI(fluidPage(
                  textOutput("Info_ScrM"),
                  textOutput("Info_Conf"),
                  textOutput("Info_Tre"),
-               
+                 downloadButton("downloadTable", "Download Table"),
              ),
               tags$div(
                tabsetPanel(
                tabPanel("Table",
+                        
                         tags$div(
                                   tags$h1("Cost"),
                                   DT::dataTableOutput("table_cost"),

@@ -21,13 +21,17 @@ library(scales)
 library(plyr) 
 library(shinyjs)
 library(DT)
+library(openxlsx)
+library(writexl)
 
 
 # Define server logic required to draw a histogram
 shinyServer(function(input, output,session) {
   
 
-  v <- reactiveValues(doPlot = FALSE)
+  v <- reactiveValues(doPlot = FALSE,
+                      tableCost = NULL,
+                      tableU = NULL)
   options(scipen=8)
   observeEvent(input$go, {
     # 0 will be coerced to FALSE
@@ -40,6 +44,16 @@ shinyServer(function(input, output,session) {
   observeEvent(input$reset, {
     v$doPlot <- FALSE
   })  
+  
+  dia <-  reactiveValues(screening_name = "",
+                         screening_sens = 0,
+                         screening_spec = 0,
+                         screening_cost = 0,
+                         confirming_name = "",
+                         confirming_sens = 0,
+                         confirming_spec = 0,
+                         confirming_cost = 0
+  )
   
   #Diagnosis input 
   Diagnosis <- reactiveValues(Sensitivity = 90,
@@ -78,6 +92,7 @@ shinyServer(function(input, output,session) {
   
   observe({
     if(input$screening!=3){
+
       if(v$doPlot == F){
         shinyjs::hide("Lineplot")
         shinyjs::hide("Lineplot2")
@@ -111,6 +126,13 @@ shinyServer(function(input, output,session) {
       enable("care")
       shinyjs::hide("Scr_table")
       Info$screening <- "By age"
+      updateCheckboxGroupInput(session, "care", "Link to care:",
+                               c("HCV genotype testing" = 1,
+                                 "Fibroscan stiffness testing" = 2,
+                                 "Relevant and safety lab" = 3,
+                                 "Others" = 4
+                               ))
+      
       # 41-50
       if(input$age_s == 1){
         p_t$S_screening <- 	11169018
@@ -135,12 +157,18 @@ shinyServer(function(input, output,session) {
       enable("Treatment")
       enable("care")
 
+
       x <- input$risk_g
       if(!is.null(x)){
         shinyjs::show("Scr_table")
         shinyjs::show("Scr_th")
         Info$screening <- "By risk group"
-
+        updateCheckboxGroupInput(session, "care", "Link to care:",
+                                 c("HCV genotype testing" = 1,
+                                   "Fibroscan stiffness testing" = 2,
+                                   "Relevant and safety lab" = 3,
+                                   "Others" = 4
+                                 ))
         if(!length(which(x == 1)) == 0){
           shinyjs::show("Scr_td1")
           rg$hiv_people <- 444000
@@ -233,12 +261,35 @@ shinyServer(function(input, output,session) {
     }
     
     else if(input$screening==3){
+
+      updateCheckboxGroupInput(session, "care", "Link to care:",
+                               c("HCV genotype testing" = 1,
+                                 "Fibroscan stiffness testing" = 2,
+                                 "Relevant and safety lab" = 3,
+                                 "Others" = 4
+                               ),c(1,2,3))
+      updateRadioButtons(session,"Treatment", "Novel Treatment type:",
+                         c("No novel treatment" = 0,
+                           "Sofosbuvir with Velpatasvir (pan-genotypic treatments)" =1,
+                           "Sofosbuvir with Ledipasvir (National List of Essential Medicines)" = 2,
+                           "Sofosbuvir with Ravidasvir (pan-genotypic treatments, on-going clinical trial)" = 3,
+                           "Another durg" = 4),selected = 1)
+      updateRadioButtons(session,"Dia_Scr", "Screening:",
+                         c("Rapid strip test ANT HCV" =1,
+                           "HCV Antibody" = 2,
+                           "Rapid HCV RNA" = 3,
+                           "Other test" = 4),selected = 1)
+      updateRadioButtons(session,"Dia_Con", "Confirming:",
+                         c("HCV RNA" = 1,
+                           "CORE Antigen" = 2,
+                           "Rapid HCV RNA" = 3),selected = 1)
+      
       disable("age_s")
       disable("risk_g")
-      disable("Dia_Con")
-      disable("Dia_Scr")
-      disable("Treatment")
-      disable("care")
+      delay(10,disable("Dia_Scr"))
+      delay(500,disable("Dia_Con"))
+      delay(10,disable("Treatment"))
+      delay(10,disable("care"))
       p_t$S_screening <- 0
       p_t$Pos <- 0
       flie_download$parms <- parms_base()
@@ -471,6 +522,12 @@ shinyServer(function(input, output,session) {
   
   #Diagnosis Confirming
   observe({
+    if(input$Dia_Scr == 3){
+      dia$confirming_name <- "None"
+      dia$confirming_sens <- 100
+      dia$confirming_spec <- 100
+      dia$confirming_cost <- 0
+    }else{      
       # HCV RNA
     if(input$Dia_Con == 1){
       dia$confirming_name <- "HCV RNA"
@@ -490,7 +547,7 @@ shinyServer(function(input, output,session) {
       dia$confirming_spec <- 100
       dia$confirming_cost <- input$Con3_Dia_Cost #THB
     }
-    
+    }
   })
   
   #Diagnosis box input Confirm button
@@ -832,7 +889,7 @@ shinyServer(function(input, output,session) {
         caset0 =  input$P0*0.03,      #0.03*P0,
         standard_start = 2004,
         new_start = 2019,
-        nscr = 0.05,
+        nscr = 0.005,
         scr_yr = p_t$scr_yr,
         scr_cov = round(p_t$Pos/p_t$scr_yr),      #0.9/scr_yr,
         sens = 0.985,
@@ -964,6 +1021,131 @@ shinyServer(function(input, output,session) {
       out_df
     })
     
+    cost_utility_list <- reactive({
+      
+      df_base <- out_df_base()
+      df_new <- out_df()
+      # screening_people <-out_df()[c(21:62), 33]
+      # Confirming_people <-out_df()[c(21:62), 33]
+      # for (i in 1:p_t$scr_yr) {
+      #   screening_people[i] <- p_t$S_screening/p_t$scr_yr
+      # }
+      # 
+      # Confirming_cost <- round(screening_people*(dia$screening_sens/100)*(dia$screening_spec/100)*dia$confirming_cost)
+      # screening_cost <- screening_people*(dia$screening_cost+extra$total_cost) + Confirming_cost
+      # Treatment_people <-data.frame(round(out_df()[c(21:62),32]))
+      # Treatment_cost <- Treatment_people*Treatment$cost
+      # Total_cost <- screening_cost + Treatment_cost
+      # Total_cost_dis <- Total_cost*0.97
+      
+      attach(df_base)
+      
+      #HCV genotype testing + Fibroscan stiffness testing + Relevant and safety lab
+      #4000 + 2500 + 1500
+      extra_cost_base <- 4000 + 2500 + 1500
+      treat_coas_base <- input$Tre1_Cost
+      screening_people <- screen
+      
+      #cost of Confirming
+      Confirming_cost <- round(screen*(94/100)*(98/100)*input$Con1_Dia_Cost)
+      #cost of screening using GeneEXpert
+      screen_base <- screen*(dia$screening_cost+extra_cost_base) + Confirming_cost
+      #cost of treatment using Sof-Vel
+      treat_base <- treat_new*treat_coas_base
+      #cost of extra lab per treatment
+      # extra_base <- -c((diff(fibrosis )+diff(compensate)+diff(decompensate)+diff(total_HCC)))*extra_cost_base
+      #cost per visit
+      # indirect_base <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
+      # #cost per visit
+      # complicate_base <-  compensate*86236 + decompensate*157755 + total_HCC*197961
+      #total cost from 2019 onwards
+      total_base <- screen_base[21:62]+treat_base[21:62]
+      #total cost with 3% discount
+      total_base_dis<-total_base*(1/(1+0.03)^(0:41))
+      cost_base_df <- data.frame(df_base[c(21:62),1] , screen_base[21:62],treat_base[21:62],total_base,total_base_dis)
+      #total utility from 2019 (quality of life loss due to infection and death)
+      utility_base <- fibrosis[21:62]*0.73+compensate[21:62]*0.7+
+        decompensate[21:62]*0.58+total_HCC[21:62]*0.58+
+        diff(dthC14)[20:61]*27+diff(dthHCC)[20:61]*17
+      #total Utility with 3% discount
+      utility_base_dis <- utility_base*(1/(1+0.03)^(0:41))
+      
+      detach()
+      HCC_death_base<-df_base[c(21:62),17]-df_base[c(20:61),17]
+      utility_base_df <-data.frame(df_base[c(21:62),1],
+                                  round(df_base[c(21:62),34]),
+                                  round(df_base[c(21:62),35]),
+                                  round(df_base[c(21:62),36]),
+                                  round(df_base[c(21:62),c(25)]),
+                                  round(df_base[c(21:62),c(26)]),
+                                  round(df_base[c(21:62),c(29)]),#incidence
+                                  round(df_base[c(21:62),c(28)]),#new death
+                                  round(HCC_death_base),
+                                  round(df_base[c(21:62),c(15)]),#Total death
+                                  round(df_base[c(21:62),c(17)]),#Total death HCC
+                                  round(utility_base),
+                                  round(utility_base_dis))
+      attach(df_new)
+      screening_people <- screen*0
+      for (i in 1:p_t$scr_yr) {
+        screening_people[20+i] <- p_t$S_screening/p_t$scr_yr
+      }
+      
+      #cost of Confirming
+      Confirming_cost <- round(screening_people*(dia$screening_sens/100)*(dia$screening_spec/100)*dia$confirming_cost)
+      #cost of screening using GeneEXpert
+      screen_new <- screening_people*(dia$screening_cost+extra$total_cost) + Confirming_cost
+      #cost of treatment using Sof-Vel
+      treat_new <- treat_new*Treatment$cost
+      #cost of extra lab per treatment
+      # extra_new <- -c((diff(fibrosis)+diff(compensate)+diff(decompensate)+diff(total_HCC)))*extra$total_cost
+      #cost per visit
+      # indirect_new <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
+      #cost per visit
+      # complicate_new <-  compensate*86236 + decompensate*157755 + total_HCC*197961
+      #total cost from 2019 onwards
+      total_new <- screen_new[21:62]+treat_new[21:62]
+      #total cost with 3% discount
+      total_new_dis<-total_new*(1/(1+0.03)^(0:41))
+      cost_new_df <- data.frame(df_base[c(21:62),1],screen_new[21:62],treat_new[21:62],total_new,total_new_dis)
+      
+      #total utility from 2019 (quality of life loss due to infection and death)
+      utility_new <- fibrosis[21:62]*0.73+compensate[21:62]*0.7+
+        decompensate[21:62]*0.58+total_HCC[21:62]*0.58+
+        diff(dthC14)[20:61]*27+diff(dthHCC)[20:61]*17
+      #total Utility with 3% discount
+      utility_new_dis <- utility_new*(1/(1+0.03)^(0:41))
+      
+      detach()
+      HCC_death_new<-df_new[c(21:62),17]-df_new[c(20:61),17]
+      utility_new_df <-data.frame(df_base[c(21:62),1],
+                            round(df_new[c(21:62),34]),
+                            round(df_new[c(21:62),35]),
+                            round(df_new[c(21:62),36]),
+                            round(df_new[c(21:62),c(25)]),
+                            round(df_new[c(21:62),c(26)]),
+                            round(df_new[c(21:62),c(29)]),#incidence
+                            round(df_new[c(21:62),c(28)]),#new death
+                            round(HCC_death_new),
+                            round(df_new[c(21:62),c(15)]),#Total death
+                            round(df_new[c(21:62),c(17)]),#Total death HCC
+                            round(utility_new),
+                            round(utility_new_dis))
+      table_name_cost <-c("Times","screening cost","Treatment cost",
+                     "Total cost","Total cost with discount(3%)")
+      names(cost_base_df) <- table_name_cost
+      names(cost_new_df) <- table_name_cost
+      Utility_table_name <-c("Times","Fibrosis","Compensate","Decompensate","Total Infection",
+                     "Total HCC","Incidence HCC","New Death","Death HCC","Total Death",
+                     "Total Death HCC","Utility","Utility With discount")
+      names(utility_base_df) <- Utility_table_name
+      names(utility_new_df) <- Utility_table_name
+      cost_utility_list <- list(
+        "cost_base_df"=cost_base_df,"utility_base_df"=utility_base_df,"cost_new_df"=cost_new_df,"utility_new_df"=utility_new_df
+      )
+      cost_utility_list
+    })
+    
 
     
     #Screening cost
@@ -1038,7 +1220,7 @@ shinyServer(function(input, output,session) {
         caset0 =  61623143*0.03,      #0.03*P0,
         standard_start = 2004,
         new_start = 2019,
-        nscr = 0.05,
+        nscr = 0.005,
         scr_yr = 0,
         scr_cov = 0,      #0.9/scr_yr,
         sens = 0.985,
@@ -1569,33 +1751,33 @@ shinyServer(function(input, output,session) {
     
     output$table_cost <- DT::renderDataTable({
       if (v$doPlot == FALSE) return()
-      df_new <- out_df()[1:61,]
-      screening_people <-out_df()[c(21:62), 33]
-      Confirming_people <-out_df()[c(21:62), 33]
-      for (i in 1:p_t$scr_yr) {
-        screening_people[i] <- p_t$S_screening/p_t$scr_yr
-      }
-      Confirming_cost <- round(screening_people*(dia$screening_sens/100)*(dia$screening_spec/100)*dia$confirming_cost)
-      screening_cost <- screening_people*(dia$screening_cost+extra$total_cost) + Confirming_cost
-      Treatment_people <-data.frame(round(out_df()[c(21:62),32]))
-      Treatment_cost <- Treatment_people*Treatment$cost
-      Total_cost <- screening_cost + Treatment_cost
-      Total_cost_dis <- Total_cost*0.97
-
-      screening_cost <- round(screening_cost / 1e6, 2)
-      Treatment_cost <- round(Treatment_cost[,1] / 1e6, 2)
-      Total_cost     <- round(Total_cost[,1] / 1e6, 2)
-      Total_cost_dis <- round(Total_cost_dis[,1] / 1e6, 2)
-      Treatmen_Cost_table <- data.frame(out_df()[c(21:62),1],screening_cost,Treatment_cost,Total_cost,Total_cost_dis)
+      # df_new <- out_df()[1:61,]
+      # screening_people <-out_df()[c(21:62), 33]
+      # # Confirming_people <-out_df()[c(21:62), 33]
+      # for (i in 1:p_t$scr_yr) {
+      #   screening_people[i] <- p_t$S_screening/p_t$scr_yr
+      # }
+      # Confirming_cost <- round(screening_people*(dia$screening_sens/100)*(dia$screening_spec/100)*dia$confirming_cost)
+      # screening_cost <- screening_people*(dia$screening_cost+extra$total_cost) + Confirming_cost
+      # Treatment_people <-data.frame(round(out_df()[c(21:62),32]))
+      # Treatment_cost <- Treatment_people*Treatment$cost
+      # Total_cost <- screening_cost + Treatment_cost
+      # Total_cost_dis <- Total_cost*0.97
+      
+      cost_df <- as.data.frame(cost_utility_list()["cost_new_df"]) 
+      screening_cost <- round(cost_df[,2] / 1e6, 2)
+      Treatment_cost <- round(cost_df[,3]  / 1e6, 2)
+      Total_cost     <- round(cost_df[,4]  / 1e6, 2)
+      Total_cost_dis <- round(cost_df[,5]  / 1e6, 2)
+      Treatmen_Cost_table <- data.frame(cost_df[,1],screening_cost,Treatment_cost,Total_cost,Total_cost_dis)
       total_row <-  colSums(Treatmen_Cost_table)
       total_row[1] <- "Total"
       Treatmen_Cost_table <- rbind(Treatmen_Cost_table, total_row) 
-      names(Treatmen_Cost_table)[1] <- "Times"
-      names(Treatmen_Cost_table)[2] <- "screening cost (Million)"
-      names(Treatmen_Cost_table)[3] <- "Treatment cost (Million)"
-      names(Treatmen_Cost_table)[4] <- "Total cost (Million)"
-      names(Treatmen_Cost_table)[5] <- "Total cost with discount(3%)(Million)"
-      
+      table_name <-c("Times","screening cost (Million)","Treatment cost (Million)",
+                     "Total cost (Million)","Total cost with discount(3%)(Million)")
+      names(Treatmen_Cost_table) <- table_name
+
+      v$tableCost <- cbind(table_name,t(Treatmen_Cost_table[c(1:12,17,22,27,32,37,42),]))  
       withProgress(message = 'Calculation in progress', {  
         DT::datatable(Treatmen_Cost_table,
                       rownames = FALSE,
@@ -1606,15 +1788,7 @@ shinyServer(function(input, output,session) {
       })
     })
     
-    dia <-  reactiveValues(screening_name = "",
-                           screening_sens = 0,
-                           screening_spec = 0,
-                           screening_cost = 0,
-                           confirming_name = "",
-                           confirming_sens = 0,
-                           confirming_spec = 0,
-                           confirming_cost = 0
-    )
+
       
 
     output$table_Treatment <- DT::renderDataTable({
@@ -1644,95 +1818,24 @@ shinyServer(function(input, output,session) {
     
     output$table_Utility <- DT::renderDataTable({
       if (v$doPlot == FALSE) return()
-      df_base <- out_df_base()
-      df_new <- out_df()
-      attach(df_base)
-      #cost of screening using GeneEXpert
-      screen_base <- screen*10*30.41
-      #cost of treatment using Sof-Vel
-      treat_base <- treat_new*800*30.41
-      #cost of extra lab per treatment
-      extra_base <- -c((diff(fibrosis )+diff(compensate)+diff(decompensate)+diff(total_HCC)))*4000
-      #cost per visit
-      indirect_base <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
-      #cost per visit
-      complicate_base <-  compensate*86236 + decompensate*157755 + total_HCC*197961
-      #total cost from 2019 onwards
-      total_base <- screen_base[20:61]+treat_base[20:61]+
-        extra_base[19:60] +indirect_base[20:61] + complicate_base[20:61]
-      #total cost with 3% discount
-      total_base_dis<-total_base*(1/(1+0.03)^(0:41))
-      #total utility from 2019 (quality of life loss due to infection and death)
-      utility_base <- fibrosis[20:61]*0.73+compensate[20:61]*0.7+
-        decompensate[20:61]*0.58+total_HCC[20:61]*0.58+
-        diff(dthC14)[19:60]*27+diff(dthHCC)[19:60]*17
-      #total Utility with 3% discount
-      utility_base_dis <- utility_base*(1/(1+0.03)^(0:41))
-      
-      detach()
-      attach(df_new)
-      
-      #cost of screening using GeneEXpert
-      screen_new <- screen*10*30.41
-      #cost of treatment using Sof-Vel
-      treat_new <- treat_new*800*30.41
-      #cost of extra lab per treatment
-      extra_new <- -c((diff(fibrosis)+diff(compensate)+diff(decompensate)+diff(total_HCC)))*4000
-      #cost per visit
-      indirect_new <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
-      #cost per visit
-      complicate_new <-  compensate*86236 + decompensate*157755 + total_HCC*197961
-      #total cost from 2019 onwards
-      total_new <- screen_new[20:61]+treat_new[20:61]+
-        extra_new[19:60] +indirect_new[20:61] + complicate_new[20:61]
-      #total cost with 3% discount
-      total_new_dis<-total_new*(1/(1+0.03)^(0:41))
-      #total utility from 2019 (quality of life loss due to infection and death)
-      utility_new <- fibrosis[20:61]*0.73+compensate[20:61]*0.7+
-        decompensate[20:61]*0.58+total_HCC[20:61]*0.58+
-        diff(dthC14)[19:60]*27+diff(dthHCC)[19:60]*17
-      #total Utility with 3% discount
-      utility_new_dis <- utility_new*(1/(1+0.03)^(0:41))
-      
-      detach()
-      
-      
-      df <- out_df()
-      
-        if (v$doPlot == FALSE) return()
-      
-      Utility <- data.frame(df[c(21:62),1],round(df[c(21:62),34]*0.73),
-                             round(df[c(21:62),35]*0.7),
-                             round(df[c(21:62),36]*0.58),
-                             round(df[c(21:62),c(26)]*0.58),
-                             round(df[c(21:62),c(15)]*27),
-                             round(df[c(21:62),c(17)]*17),
-                             round(utility_new),
-                             round(utility_new_dis)
-                             )
+
+      Utility <-data.frame(as.data.frame(cost_utility_list()["utility_new_df"]) )
       total_row <-  colSums(Utility)
       Utility <- rbind(Utility, total_row) 
       Utility[43,1] <- "Total"
+      table_name <-c("Times","Fibrosis","Compensate","Decompensate","Total Infection",
+                     "Total HCC","Incidence HCC","New Death","Death HCC","Total Death",
+                     "Total Death HCC","Utility","Utility With discount")
+      names(Utility) <- table_name
       
-      names(Utility)[1] <- "Times"
-      names(Utility)[2] <- "Fibrosis"
-      names(Utility)[3] <- "Compensate"
-      names(Utility)[4] <- "Decompensate"
-      names(Utility)[5] <- "Total HCC"
-      names(Utility)[6] <- "Death"
-      names(Utility)[7] <- "Death HCC"
-      names(Utility)[8] <- "Utility"
-      names(Utility)[9] <- "Utility With discount"
-      
-
-      
+      v$tableU <- cbind(table_name,t(Utility[c(1:12,17,22,27,32,37,42),])) 
       withProgress(message = 'Calculation in progress', {  
         Utility %>% 
           mutate(Fibrosis = formatC(round(Fibrosis), format = "f", big.mark = ",", drop0trailing = TRUE),
                  Compensate = formatC(round(Compensate), format = "f", big.mark = ",", drop0trailing = TRUE),
                  Decompensate = formatC(round(Decompensate), format = "f", big.mark = ",", drop0trailing = TRUE),
                  `Total HCC` = formatC(round(`Total HCC`), format = "f", big.mark = ",", drop0trailing = TRUE),
-                 Death = formatC(round(Death), format = "f", big.mark = ",", drop0trailing = TRUE),
+                 `New Death` = formatC(round(`New Death`), format = "f", big.mark = ",", drop0trailing = TRUE),
                  `Death HCC` = formatC(round(`Death HCC`), format = "f", big.mark = ",", drop0trailing = TRUE),
                  Utility = formatC(round(Utility), format = "f", big.mark = ",", drop0trailing = TRUE),
                  `Utility With discount` = formatC(round(`Utility With discount`), format = "f", big.mark = ",", drop0trailing = TRUE)
@@ -1751,7 +1854,7 @@ shinyServer(function(input, output,session) {
       if (v$doPlot == FALSE) return()
       df <- out_df()
       utility <- data.frame(df[c(21:62),1],df[c(21:62),34]*0.73,df[c(21:62),35]*0.7,df[c(21:62),36]*0.58,df[c(21:62),c(26)]*0.58)
-      
+
       names(utility)[1] <- "Times"
       names(utility)[2] <- "Fibrosis"
       names(utility)[3] <- "Compensate"
@@ -1849,70 +1952,36 @@ shinyServer(function(input, output,session) {
     output$ICER <- renderPlot({
       withProgress(message = 'Calculation in progress', {  
       if (v$doPlot == FALSE) return()
-      df_base <- out_df_base()[1:61,]
-      df_new <- out_df()[1:61,]
 
-      attach(df_base)
-      #cost of screening using GeneEXpert
-      screen_base <- screen*10*30.41
-      #cost of treatment using Sof-Vel
-      treat_base <- treat_new*800*30.41
-      #cost of extra lab per treatment
-      extra_base <- -c((diff(fibrosis )+diff(compensate)+diff(decompensate)+diff(total_HCC)))*4000
-      #cost per visit
-      indirect_base <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
-      #cost per visit
-      complicate_base <-  compensate*86236 + decompensate*157755 + total_HCC*197961
-      #total cost from 2019 onwards
-      total_base <- screen_base[20:61]+treat_base[20:61]+
-        extra_base[19:60] +indirect_base[20:61] + complicate_base[20:61]
-      #total cost with 3% discount
-      total_base_dis<-total_base*(1/(1+0.03)^(0:41))
-      #total utility from 2019 (quality of life loss due to infection and death)
-      utility_base <- fibrosis[20:61]*0.73+compensate[20:61]*0.7+
-        decompensate[20:61]*0.58+total_HCC[20:61]*0.58+
-        diff(dthC14)[19:60]*27+diff(dthHCC)[19:60]*17
-      #total Utility with 3% discount
-      utility_base_dis <- utility_base*(1/(1+0.03)^(0:41))
+      CUlist <- cost_utility_list()
+      ncol_cost <- ncol(data.frame(CUlist["cost_base_df"]))
+      ncol_utility <- ncol(data.frame(CUlist["utility_base_df"]))
       
-      detach()
-      attach(df_new)
-      #cost of screening using GeneEXpert
-      screen_new <- screen*10*30.41
-      #cost of treatment using Sof-Vel
-      treat_new <- treat_new*800*30.41
-      #cost of extra lab per treatment
-      extra_new <- -c((diff(fibrosis)+diff(compensate)+diff(decompensate)+diff(total_HCC)))*4000
-      #cost per visit
-      indirect_new <- fibrosis*4470+compensate*4380 + decompensate*6060 + total_HCC*9900
-      #cost per visit
-      complicate_new <-  compensate*86236 + decompensate*157755 + total_HCC*197961
-      #total cost from 2019 onwards
-      total_new <- screen_new[20:61]+treat_new[20:61]+
-        extra_new[19:60] +indirect_new[20:61] + complicate_new[20:61]
-      #total cost with 3% discount
-      total_new_dis<-total_new*(1/(1+0.03)^(0:41))
-      #total utility from 2019 (quality of life loss due to infection and death)
-      utility_new <- fibrosis[20:61]*0.73+compensate[20:61]*0.7+
-        decompensate[20:61]*0.58+total_HCC[20:61]*0.58+
-        diff(dthC14)[19:60]*27+diff(dthHCC)[19:60]*17
-      #total Utility with 3% discount
-      utility_new_dis <- utility_new*(1/(1+0.03)^(0:41))
-      
-      detach()
-      
-      ICER_r1_Inc_Cost <- (sum(total_new_dis)-sum(total_base_dis))/1000000
+      total_base_dis <- data.frame(CUlist["cost_base_df"])[,ncol_cost]
+      total_new_dis <- data.frame(CUlist["cost_new_df"])[,ncol_cost]
+      utility_base_dis <- data.frame(CUlist["utility_base_df"])[,ncol_utility]
+      utility_new_dis <- data.frame(CUlist["utility_new_df"])[,ncol_utility]
+      #ICER_r1_Inc_Cost (10 Million)
+      ICER_r1_Inc_Cost <- (sum(total_base_dis)-sum(total_new_dis))/1000000
       ICER_r1_Qal_gain <- (sum(utility_base_dis)-sum(utility_new_dis))
       ICER_r1 <- data.frame(ICER_r1_Inc_Cost,ICER_r1_Qal_gain)
-
+      print(ICER_r1)
+      axis_y1 <- -150000
+      if(ICER_r1_Inc_Cost < -140000){
+        round_cost <- round(ICER_r1_Inc_Cost)-20000
+        
+        axis_y1 <- round(round_cost,-nchar(round_cost)+3)
+      }
+      axis_y2 <- axis_y1/2
+      
       WTP.5GDP <- 160000 
       colours =c("black") #,"blue","purple", "green", "pink","orange", "grey", "darkred","cyan2","blueviolet", "darkgoldenrod4","brown2","lawngreen")
       #plot(summary_ICER_PSA_compareWORST_SIIL[1,2,],summary_ICER_PSA_compareWORST_SIIL[1,1,])
       
-      plot(0, xlim=c(-1100000, 3700000), ylim=c(-150000, 100000), xlab="Incremental QALYs",ylab="Incremental Costs THB (million)", pch=18, col=colours, 
+      plot(0, xlim=c(-1100000, 3700000), ylim=c(axis_y1, 100000), xlab="Incremental QALYs",ylab="Incremental Costs THB (Million)", pch=18, col=colours, 
            main="Incremental cost-effectiveness ratio (ICER) plane",yaxt="n",xaxt="n" )
       
-      axis(side = 2,at=c(-150000,-75000,0,50000,100000),labels = c("-150,000","-75000","0","50,000","100,000"))
+      axis(side = 2,at=c(axis_y1,axis_y2,0,50000,100000),labels = c(as.character(axis_y1),as.character(axis_y2),"0","50,000","100,000"))
       axis(side = 1,at=c(-1000000,-500000,0,1500000,3000000),labels = c("-1,000,000","-500,000","0","1,500,000","3,000,000"))
       
       qq<-c(-1000000,0,1000000)
@@ -1987,6 +2056,22 @@ shinyServer(function(input, output,session) {
         
       }, contentType = "text/csv"
       
+    )
+    
+    output$downloadTable <- downloadHandler(
+      filename = function() {
+        paste0("TableData_Cost_Utility", ".xlsx")
+      },
+      content = function(file) {
+        wb <- createWorkbook()
+        addWorksheet(wb, sheetName = "Cost")
+        addWorksheet(wb, sheetName = "Utility")
+        writeData(wb, sheet = 1, x = v$tableCost, startCol = 1, startRow = 1)
+        writeData(wb, sheet = 2, x = v$tableU, startCol = 1, startRow = 1)
+
+        
+        saveWorkbook(wb, file = file, overwrite = TRUE)
+      }
     )
     
     
