@@ -1047,6 +1047,7 @@ shinyServer(function(input, output,session) {
       screening_people <- screen
       
       #cost of Confirming
+      #(94/100) and (98/100) from Sensitivity and of Specificity Screening
       Confirming_cost <- round(screen*(94/100)*(98/100)*input$Con1_Dia_Cost)
       #cost of screening using GeneEXpert
       screen_base <- screen*(dia$screening_cost+extra_cost_base) + Confirming_cost
