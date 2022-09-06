@@ -144,3 +144,10 @@ x_melt <-melt(x, id="time")
 #plot graph(ggplot2) 
 ggplot(data = x_melt) + 
   geom_line(mapping = aes(x = time, y = value,color = variable),size = 1.5)
+
+data <- data.frame(x1 = 1:4,               # Create example data
+                  x2 = 4:1,
+                  x3 = 1)
+data     
+x <- colSums(data)
+data1 <- rbind(data, x) 
